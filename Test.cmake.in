@@ -1,53 +1,238 @@
-set( LOCAL_TEST_DIR ${CMAKE_CURRENT_LIST_DIR} )
+#===============================================================================
+# LightAP Test Build Template
+# Version: 1.1.0
+#
+# This template handles building unit tests and benchmarks for LightAP modules.
+# It integrates with CTest for test execution and reporting.
+#
+# Required Variables:
+#   MODULE_NAME             - Module name (e.g., "Core")
+#   MODULE_TEST_DIR         - Test directory path
+#   MODULE_EXTERNAL_TEST_LIB - Libraries to link against (including module lib)
+#
+# Optional Variables:
+#   ENABLE_MODULE_BENCHMARK     - Build benchmark targets
+#   MODULE_EXTERNAL_INCLUDE_DIR - External include directories
+#   MODULE_EXTERNAL_LIB_DIR     - External library directories
+#   LOCAL_LIB_INCLUDE_DIRS      - Include dirs from library (set by library template)
+#
+# Example:
+#   set(ENABLE_BUILD_UNITTEST ON)
+#   set(MODULE_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/test)
+#   set(MODULE_EXTERNAL_TEST_LIB lap_core GTest::GTest GTest::Main)
+#   include(BuildTemplate/Test.cmake.in)
+#===============================================================================
 
-if ( ENABLE_BUILD_UNITTEST )
-    string ( TOLOWER ${MODULE_NAME} LOWER_MODULE_NAME )
-    set ( LOCAL_TEST_TARGET ${LOWER_MODULE_NAME}_test )
+if(NOT ENABLE_BUILD_UNITTEST)
+    return()
+endif()
 
-    file ( GLOB_RECURSE LOCAL_TESTS_SOURCES CONFIGURE_DEPENDS ${MODULE_TEST_DIR}/unittest/*.c* )
-    file ( GLOB_RECURSE LOCAL_TESTS_HEADERS CONFIGURE_DEPENDS ${MODULE_TEST_DIR}/unittest/*.h* )
+message(STATUS "[Test] Building tests for ${MODULE_NAME}")
 
-    set ( LOCAL_TESTS_INCLUDE_DIRS "" )
-    foreach ( _headerFile ${LOCAL_TESTS_HEADERS}) 
-        get_filename_component ( _dir ${_headerFile} PATH) 
-        list ( APPEND LOCAL_TESTS_INCLUDE_DIRS ${_dir} )
-    endforeach ()
-    list ( APPEND LOCAL_TESTS_INCLUDE_DIRS ${CMAKE_CURRENT_BINARY_DIR} )
-    list ( APPEND LOCAL_TESTS_INCLUDE_DIRS ${LOCAL_LIB_INCLUDE_DIRS} )         # include from library
-    list ( APPEND LOCAL_TESTS_INCLUDE_DIRS ${SDK_INCLUDE_DIR} )
-    list ( REMOVE_DUPLICATES LOCAL_TESTS_INCLUDE_DIRS )
-    #message ( WARNING ${MODULE_TEST_DIR} )
-    #message ( WARNING ${LOCAL_TESTS_SOURCES} )
+#===============================================================================
+# Validate Required Variables
+#===============================================================================
 
-    # build
-    include_directories ( ${SDK_INCLUDE_DIR} ${LOCAL_TESTS_INCLUDE_DIRS} ${MODULE_EXTERNAL_INCLUDE_DIR} )
-    link_directories ( ${SDK_LIB_DIR} ${CMAKE_CURRENT_BINARY_DIR} ${MODULE_EXTERNAL_LIB_DIR} )
+lap_require_variable(MODULE_NAME 
+    "[Test] MODULE_NAME is required but not defined")
+lap_require_variable(MODULE_TEST_DIR 
+    "[Test] MODULE_TEST_DIR is required but not defined")
+lap_require_variable(MODULE_EXTERNAL_TEST_LIB 
+    "[Test] MODULE_EXTERNAL_TEST_LIB is required but not defined")
 
-    add_executable ( ${LOCAL_TEST_TARGET} ${LOCAL_TESTS_SOURCES} )
-    target_link_libraries ( ${LOCAL_TEST_TARGET} PRIVATE ${MODULE_EXTERNAL_TEST_LIB} )
+lap_validate_directory("${MODULE_TEST_DIR}" "MODULE_TEST_DIR")
 
-    if ( ENABLE_MODULE_BENCHMARK )
-        set ( LOCAL_BENCHMARK_TARGET ${LOWER_MODULE_NAME}_benchmark )
+#===============================================================================
+# Unit Test Configuration
+#===============================================================================
 
-        file ( GLOB LOCAL_BENCHMARK_SOURCES CONFIGURE_DEPENDS ${MODULE_TEST_DIR}/benchmark/*.c* )
-        file ( GLOB_RECURSE LOCAL_BENCHMARK_HEADERS CONFIGURE_DEPENDS ${MODULE_TEST_DIR}/benchmark/*.h* )
+string(TOLOWER ${MODULE_NAME} LOWER_MODULE_NAME)
+set(LOCAL_TEST_TARGET ${LOWER_MODULE_NAME}_test)
 
-        set ( LOCAL_BENCHMARK_INCLUDE_DIRS "" )
-        foreach ( _headerFile ${LOCAL_BENCHMARK_HEADERS}) 
-            get_filename_component ( _dir ${_headerFile} PATH) 
-            list ( APPEND LOCAL_BENCHMARK_INCLUDE_DIRS ${_dir} )
-        endforeach ()
-        list ( APPEND LOCAL_BENCHMARK_INCLUDE_DIRS ${CMAKE_CURRENT_BINARY_DIR} )
-        list ( APPEND LOCAL_BENCHMARK_INCLUDE_DIRS ${LOCAL_LIB_INCLUDE_DIRS} )         # include from library
-        list ( REMOVE_DUPLICATES LOCAL_BENCHMARK_INCLUDE_DIRS )
+# Collect test sources
+file(GLOB_RECURSE LOCAL_TESTS_SOURCES CONFIGURE_DEPENDS 
+    "${MODULE_TEST_DIR}/unittest/*.cpp"
+    "${MODULE_TEST_DIR}/unittest/*.cxx"
+    "${MODULE_TEST_DIR}/unittest/*.cc"
+    "${MODULE_TEST_DIR}/unittest/*.c"
+)
 
-        # build
-        include_directories ( ${SDK_INCLUDE_DIR} ${LOCAL_TESTS_SOURCES} ${MODULE_EXTERNAL_INCLUDE_DIR} )
-        link_directories ( ${SDK_LIB_DIR} ${LOCAL_BENCHMARK_INCLUDE_DIRS} ${MODULE_EXTERNAL_LIB_DIR} )
-        #message ( WARNING ${SDK_INCLUDE_DIR} )
+file(GLOB_RECURSE LOCAL_TESTS_HEADERS CONFIGURE_DEPENDS 
+    "${MODULE_TEST_DIR}/unittest/*.h"
+    "${MODULE_TEST_DIR}/unittest/*.hpp"
+    "${MODULE_TEST_DIR}/unittest/*.hxx"
+)
 
-        add_executable ( ${LOCAL_BENCHMARK_TARGET} ${LOCAL_BENCHMARK_SOURCES} )
-        target_link_libraries ( ${LOCAL_BENCHMARK_TARGET} PRIVATE ${MODULE_EXTERNAL_TEST_LIB} )
-        #set_target_properties( ${LOCAL_BENCHMARK_TARGET} PROPERTIES LINK_FLAGS_RELEASE -s )
+if(NOT LOCAL_TESTS_SOURCES)
+    message(WARNING "[Test] No test sources found in ${MODULE_TEST_DIR}/unittest/")
+    return()
+endif()
+
+list(LENGTH LOCAL_TESTS_SOURCES TEST_SOURCE_COUNT)
+message(STATUS "[Test] Found ${TEST_SOURCE_COUNT} test source files")
+
+# Configure include directories
+set(LOCAL_TESTS_INCLUDE_DIRS "")
+
+foreach(_headerFile ${LOCAL_TESTS_HEADERS}) 
+    get_filename_component(_dir ${_headerFile} DIRECTORY) 
+    list(APPEND LOCAL_TESTS_INCLUDE_DIRS ${_dir})
+endforeach()
+
+list(APPEND LOCAL_TESTS_INCLUDE_DIRS 
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${LOCAL_LIB_INCLUDE_DIRS}  # Include from library
+    ${SDK_INCLUDE_DIR}
+    ${MODULE_EXTERNAL_INCLUDE_DIR}
+)
+
+list(REMOVE_DUPLICATES LOCAL_TESTS_INCLUDE_DIRS)
+
+# Legacy include/link directories (for compatibility)
+include_directories(${SDK_INCLUDE_DIR} ${LOCAL_TESTS_INCLUDE_DIRS} ${MODULE_EXTERNAL_INCLUDE_DIR})
+link_directories(${SDK_LIB_DIR} ${CMAKE_CURRENT_BINARY_DIR} ${MODULE_EXTERNAL_LIB_DIR})
+
+# Create test executable
+add_executable(${LOCAL_TEST_TARGET} ${LOCAL_TESTS_SOURCES})
+
+# Apply LightAP standard C++ configuration
+if(COMMAND lap_configure_cxx_target)
+    lap_configure_cxx_target(TARGET ${LOCAL_TEST_TARGET})
+else()
+    message(WARNING "[Test] lap_configure_cxx_target not available, using fallback")
+    set_target_properties(${LOCAL_TEST_TARGET} PROPERTIES
+        CXX_STANDARD ${CMAKE_CXX_STANDARD}
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+    )
+endif()
+
+# Modern CMake: Use target_* commands
+target_include_directories(${LOCAL_TEST_TARGET} 
+    PRIVATE 
+        ${LOCAL_TESTS_INCLUDE_DIRS}
+        ${MODULE_EXTERNAL_INCLUDE_DIR}
+)
+
+target_link_directories(${LOCAL_TEST_TARGET} 
+    PRIVATE 
+        ${SDK_LIB_DIR}
+        ${MODULE_EXTERNAL_LIB_DIR}
+)
+
+target_link_libraries(${LOCAL_TEST_TARGET} PRIVATE ${MODULE_EXTERNAL_TEST_LIB})
+
+# Register with CTest
+include(CTest)
+add_test(NAME ${LOCAL_TEST_TARGET} 
+    COMMAND ${LOCAL_TEST_TARGET}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+)
+
+# Set test properties
+set_tests_properties(${LOCAL_TEST_TARGET} PROPERTIES
+    TIMEOUT 300  # 5 minute timeout
+    LABELS "unittest"
+)
+
+message(STATUS "[Test] Configured unit test target: ${LOCAL_TEST_TARGET}")
+
+#===============================================================================
+# Benchmark Configuration (Optional)
+#===============================================================================
+
+if(ENABLE_MODULE_BENCHMARK)
+    message(STATUS "[Test] Building benchmarks for ${MODULE_NAME}")
+    
+    set(LOCAL_BENCHMARK_TARGET ${LOWER_MODULE_NAME}_benchmark)
+
+    # Collect benchmark sources
+    file(GLOB_RECURSE LOCAL_BENCHMARK_SOURCES CONFIGURE_DEPENDS 
+        "${MODULE_TEST_DIR}/benchmark/*.cpp"
+        "${MODULE_TEST_DIR}/benchmark/*.cxx"
+        "${MODULE_TEST_DIR}/benchmark/*.cc"
+        "${MODULE_TEST_DIR}/benchmark/*.c"
+    )
+
+    file(GLOB_RECURSE LOCAL_BENCHMARK_HEADERS CONFIGURE_DEPENDS 
+        "${MODULE_TEST_DIR}/benchmark/*.h"
+        "${MODULE_TEST_DIR}/benchmark/*.hpp"
+        "${MODULE_TEST_DIR}/benchmark/*.hxx"
+    )
+
+    if(NOT LOCAL_BENCHMARK_SOURCES)
+        message(WARNING "[Test] No benchmark sources found in ${MODULE_TEST_DIR}/benchmark/")
+    else()
+        list(LENGTH LOCAL_BENCHMARK_SOURCES BENCHMARK_SOURCE_COUNT)
+        message(STATUS "[Test] Found ${BENCHMARK_SOURCE_COUNT} benchmark source files")
+
+        # Configure benchmark include directories
+        set(LOCAL_BENCHMARK_INCLUDE_DIRS "")
+        
+        foreach(_headerFile ${LOCAL_BENCHMARK_HEADERS}) 
+            get_filename_component(_dir ${_headerFile} DIRECTORY) 
+            list(APPEND LOCAL_BENCHMARK_INCLUDE_DIRS ${_dir})
+        endforeach()
+        
+        list(APPEND LOCAL_BENCHMARK_INCLUDE_DIRS 
+            ${CMAKE_CURRENT_BINARY_DIR}
+            ${LOCAL_LIB_INCLUDE_DIRS}  # Include from library
+            ${SDK_INCLUDE_DIR}
+            ${MODULE_EXTERNAL_INCLUDE_DIR}
+        )
+        
+        list(REMOVE_DUPLICATES LOCAL_BENCHMARK_INCLUDE_DIRS)
+
+        # Legacy include/link directories
+        include_directories(${SDK_INCLUDE_DIR} ${LOCAL_BENCHMARK_INCLUDE_DIRS} ${MODULE_EXTERNAL_INCLUDE_DIR})
+        link_directories(${SDK_LIB_DIR} ${CMAKE_CURRENT_BINARY_DIR} ${MODULE_EXTERNAL_LIB_DIR})
+
+        # Create benchmark executable
+        add_executable(${LOCAL_BENCHMARK_TARGET} ${LOCAL_BENCHMARK_SOURCES})
+        
+        # Apply LightAP standard C++ configuration
+        if(COMMAND lap_configure_cxx_target)
+            lap_configure_cxx_target(TARGET ${LOCAL_BENCHMARK_TARGET})
+        else()
+            set_target_properties(${LOCAL_BENCHMARK_TARGET} PROPERTIES
+                CXX_STANDARD ${CMAKE_CXX_STANDARD}
+                CXX_STANDARD_REQUIRED ON
+                CXX_EXTENSIONS OFF
+            )
+        endif()
+        
+        # Modern CMake: Use target_* commands
+        target_include_directories(${LOCAL_BENCHMARK_TARGET} 
+            PRIVATE 
+                ${LOCAL_BENCHMARK_INCLUDE_DIRS}
+                ${MODULE_EXTERNAL_INCLUDE_DIR}
+        )
+
+        target_link_directories(${LOCAL_BENCHMARK_TARGET} 
+            PRIVATE 
+                ${SDK_LIB_DIR}
+                ${MODULE_EXTERNAL_LIB_DIR}
+        )
+
+        target_link_libraries(${LOCAL_BENCHMARK_TARGET} PRIVATE ${MODULE_EXTERNAL_TEST_LIB})
+        
+        # Register benchmark with CTest (optional, for performance tracking)
+        add_test(NAME ${LOCAL_BENCHMARK_TARGET} 
+            COMMAND ${LOCAL_BENCHMARK_TARGET}
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        )
+        
+        set_tests_properties(${LOCAL_BENCHMARK_TARGET} PROPERTIES
+            TIMEOUT 600  # 10 minute timeout for benchmarks
+            LABELS "benchmark;performance"
+        )
+        
+        message(STATUS "[Test] Configured benchmark target: ${LOCAL_BENCHMARK_TARGET}")
     endif()
 endif()
+
+#===============================================================================
+# Test Summary
+#===============================================================================
+
+message(STATUS "[Test] Test configuration complete for ${MODULE_NAME}")

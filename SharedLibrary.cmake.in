@@ -1,74 +1,250 @@
-set ( LOCAL_LIBRARY_DIR ${CMAKE_CURRENT_LIST_DIR} )
+#===============================================================================
+# LightAP Shared Library Build Template
+# Version: 1.1.0
+#
+# This template handles building shared libraries (.so) for LightAP modules.
+# It automatically collects sources, configures include paths, and sets up
+# installation rules.
+#
+# Required Variables:
+#   MODULE_NAME         - Module name (e.g., "Core")
+#   MODULE_VERNO        - Version number (e.g., "1.0.0")
+#   MODULE_SOURCE_*_DIR - Source directories (C and/or C++)
+#
+# Optional Variables:
+#   MODULE_EXTERNAL_LIB         - External libraries to link
+#   MODULE_EXTERNAL_INCLUDE_DIR - External include directories
+#   MODULE_EXTERNAL_LIB_DIR     - External library directories
+#   MODULE_INSTALL_SRC_DIR      - Custom install source directory
+#   ENABLE_BUILD_WITH_PLATFORM_PREX - Use platform prefix (default: ON)
+#
+# Example:
+#   set(ENABLE_BUILD_SHARED_LIBRARY ON)
+#   set(MODULE_NAME "MyModule")
+#   set(MODULE_VERNO "1.0.0")
+#   set(MODULE_SOURCE_CXX_DIR ${CMAKE_CURRENT_SOURCE_DIR}/source)
+#   include(BuildTemplate/SharedLibrary.cmake.in)
+#===============================================================================
 
-if ( ENABLE_BUILD_SHARED_LIBRARY )
-    # env
-    string ( TOLOWER ${MODULE_NAME} LOWER_MODULE_NAME )
-    if ( ENABLE_BUILD_WITH_PLATFORM_PREX )
-        set ( LOCAL_LIB_NAME ${PLATFORM_SYSTEM_TARGET}_${LOWER_MODULE_NAME} )
-    else ()
-        set ( LOCAL_LIB_NAME ${LOWER_MODULE_NAME} )
-    endif ()
-    set ( LOCAL_LIB_VERNO ${MODULE_VERNO} )
-    string ( REPLACE "." ";" LIST_LIB_VERNO ${LOCAL_LIB_VERNO} )
-    list ( GET LIST_LIB_VERNO 0 SUB_LIB_SOVERNO )
-    set ( BUILD_LIB_SOVERNO ${SUB_LIB_SOVERNO} )
+if(NOT ENABLE_BUILD_SHARED_LIBRARY)
+    return()
+endif()
 
-    # source
-    # c
-    if ( DEFINED MODULE_SOURCE_C_DIR )
-        file ( GLOB_RECURSE LOCAL_LIB_C_HEADERS CONFIGURE_DEPENDS ${MODULE_SOURCE_C_DIR}/*.h )
-        file ( GLOB_RECURSE LOCAL_LIB_C_SOURCES CONFIGURE_DEPENDS ${MODULE_SOURCE_C_DIR}/*.c )
+message(STATUS "[SharedLibrary] Building shared library for ${MODULE_NAME}")
+
+#===============================================================================
+# Validate Required Variables
+#===============================================================================
+
+lap_require_variable(MODULE_NAME 
+    "[SharedLibrary] MODULE_NAME is required but not defined")
+lap_require_variable(MODULE_VERNO 
+    "[SharedLibrary] MODULE_VERNO is required but not defined")
+
+if(NOT DEFINED MODULE_SOURCE_C_DIR AND NOT DEFINED MODULE_SOURCE_CXX_DIR)
+    message(FATAL_ERROR 
+        "[SharedLibrary] At least one of MODULE_SOURCE_C_DIR or MODULE_SOURCE_CXX_DIR must be defined")
+endif()
+
+#===============================================================================
+# Library Name Configuration
+#===============================================================================
+
+string(TOLOWER ${MODULE_NAME} LOWER_MODULE_NAME)
+
+if(ENABLE_BUILD_WITH_PLATFORM_PREX)
+    set(LOCAL_LIB_NAME ${PLATFORM_SYSTEM_TARGET}_${LOWER_MODULE_NAME})
+else()
+    set(LOCAL_LIB_NAME ${LOWER_MODULE_NAME})
+endif()
+
+# Parse version number for SOVERSION
+set(LOCAL_LIB_VERNO ${MODULE_VERNO})
+string(REPLACE "." ";" LIST_LIB_VERNO ${LOCAL_LIB_VERNO})
+list(GET LIST_LIB_VERNO 0 BUILD_LIB_SOVERNO)
+
+message(STATUS "[SharedLibrary] Library name: ${LOCAL_LIB_NAME}")
+message(STATUS "[SharedLibrary] Version: ${LOCAL_LIB_VERNO} (SOVERSION: ${BUILD_LIB_SOVERNO})")
+
+#===============================================================================
+# Source Collection
+#===============================================================================
+
+set(LOCAL_LIB_C_HEADERS "")
+set(LOCAL_LIB_C_SOURCES "")
+set(LOCAL_LIB_CXX_HEADERS "")
+set(LOCAL_LIB_CXX_SOURCES "")
+
+# Collect C sources
+if(DEFINED MODULE_SOURCE_C_DIR)
+    lap_validate_directory("${MODULE_SOURCE_C_DIR}" "MODULE_SOURCE_C_DIR")
+    file(GLOB_RECURSE LOCAL_LIB_C_HEADERS CONFIGURE_DEPENDS 
+        "${MODULE_SOURCE_C_DIR}/*.h")
+    file(GLOB_RECURSE LOCAL_LIB_C_SOURCES CONFIGURE_DEPENDS 
+        "${MODULE_SOURCE_C_DIR}/*.c")
+    message(STATUS "[SharedLibrary] Found ${list(LENGTH LOCAL_LIB_C_SOURCES)} C source files")
+endif()
+
+# Collect C++ sources
+if(DEFINED MODULE_SOURCE_CXX_DIR)
+    lap_validate_directory("${MODULE_SOURCE_CXX_DIR}" "MODULE_SOURCE_CXX_DIR")
+    file(GLOB_RECURSE LOCAL_LIB_CXX_HEADERS CONFIGURE_DEPENDS 
+        "${MODULE_SOURCE_CXX_DIR}/*.h"
+        "${MODULE_SOURCE_CXX_DIR}/*.hpp"
+        "${MODULE_SOURCE_CXX_DIR}/*.hxx")
+    file(GLOB_RECURSE LOCAL_LIB_CXX_SOURCES CONFIGURE_DEPENDS 
+        "${MODULE_SOURCE_CXX_DIR}/*.cpp"
+        "${MODULE_SOURCE_CXX_DIR}/*.cxx"
+        "${MODULE_SOURCE_CXX_DIR}/*.cc"
+        "${MODULE_SOURCE_CXX_DIR}/*.c++")
+    
+    list(LENGTH LOCAL_LIB_CXX_SOURCES CXX_SOURCE_COUNT)
+    message(STATUS "[SharedLibrary] Found ${CXX_SOURCE_COUNT} C++ source files")
+endif()
+
+# Verify we have sources
+if(NOT LOCAL_LIB_C_SOURCES AND NOT LOCAL_LIB_CXX_SOURCES)
+    message(FATAL_ERROR "[SharedLibrary] No source files found in specified directories")
+endif()
+
+#===============================================================================
+# Include Directory Configuration
+#===============================================================================
+
+set(LOCAL_LIB_INCLUDE_DIRS "")
+
+# Extract include directories from headers
+foreach(_headerFile ${LOCAL_LIB_C_HEADERS} ${LOCAL_LIB_CXX_HEADERS})
+    get_filename_component(_dir ${_headerFile} DIRECTORY)
+    list(APPEND LOCAL_LIB_INCLUDE_DIRS ${_dir})
+endforeach()
+
+# Add standard include directories
+list(APPEND LOCAL_LIB_INCLUDE_DIRS 
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${MODULE_EXTERNAL_INCLUDE_DIR}
+)
+
+# Remove duplicates
+list(REMOVE_DUPLICATES LOCAL_LIB_INCLUDE_DIRS)
+
+#===============================================================================
+# Build Configuration
+#===============================================================================
+
+# Configure include and link directories (legacy, but needed for some setups)
+include_directories(${SDK_INCLUDE_DIR} ${LOCAL_LIB_INCLUDE_DIRS} ${MODULE_EXTERNAL_INCLUDE_DIR})
+link_directories(${SDK_LIB_DIR} ${CMAKE_CURRENT_BINARY_DIR} ${MODULE_EXTERNAL_LIB_DIR})
+
+# Create shared library
+add_library(${LOCAL_LIB_NAME} SHARED 
+    ${LOCAL_LIB_C_SOURCES} 
+    ${LOCAL_LIB_CXX_SOURCES}
+)
+
+# Apply LightAP standard C++ configuration
+if(COMMAND lap_configure_cxx_library)
+    lap_configure_cxx_library(TARGET ${LOCAL_LIB_NAME})
+else()
+    message(WARNING "[SharedLibrary] lap_configure_cxx_library not available, using fallback")
+    set_target_properties(${LOCAL_LIB_NAME} PROPERTIES
+        CXX_STANDARD ${CMAKE_CXX_STANDARD}
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+        POSITION_INDEPENDENT_CODE ON
+    )
+endif()
+
+# Set library properties
+set_target_properties(${LOCAL_LIB_NAME} PROPERTIES
+    VERSION ${LOCAL_LIB_VERNO}
+    SOVERSION ${BUILD_LIB_SOVERNO}
+    OUTPUT_NAME ${LOCAL_LIB_NAME}
+    PUBLIC_HEADER "${LOCAL_LIB_C_HEADERS};${LOCAL_LIB_CXX_HEADERS}"
+)
+
+# Strip symbols in release builds
+if(BUILD_WITH_STRIP)
+    set_target_properties(${LOCAL_LIB_NAME} PROPERTIES 
+        LINK_FLAGS_RELEASE -s
+    )
+endif()
+
+# Modern CMake: Use target_* commands
+target_include_directories(${LOCAL_LIB_NAME} 
+    PUBLIC
+        $<BUILD_INTERFACE:${LOCAL_LIB_INCLUDE_DIRS}>
+        $<INSTALL_INTERFACE:include/${PLATFORM_SYSTEM_TARGET}/${LOWER_MODULE_NAME}>
+    PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR}
+)
+
+target_link_directories(${LOCAL_LIB_NAME} 
+    PRIVATE 
+        ${SDK_LIB_DIR}
+        ${MODULE_EXTERNAL_LIB_DIR}
+)
+
+# Link external libraries
+if(DEFINED MODULE_EXTERNAL_LIB)
+    target_link_libraries(${LOCAL_LIB_NAME} PRIVATE ${MODULE_EXTERNAL_LIB})
+endif()
+
+#===============================================================================
+# Installation Rules
+#===============================================================================
+
+set(LOCAL_INSTALL_INC_DIR ${INSTALL_INC_ROOT_DIR}/${LOWER_MODULE_NAME})
+set(LOCAL_INSTALL_LIB_DIR ${INSTALL_LIB_ROOT_DIR})
+
+# Install library
+install(TARGETS ${LOCAL_LIB_NAME}
+    EXPORT ${LOCAL_LIB_NAME}Targets
+    LIBRARY DESTINATION ${LOCAL_INSTALL_LIB_DIR}
+        COMPONENT Runtime
+        NAMELINK_COMPONENT Development
+    ARCHIVE DESTINATION ${LOCAL_INSTALL_LIB_DIR}
+        COMPONENT Development
+    PUBLIC_HEADER DESTINATION ${LOCAL_INSTALL_INC_DIR}
+        COMPONENT Development
+)
+
+# Install headers
+if(DEFINED MODULE_INSTALL_SRC_DIR)
+    install(DIRECTORY ${MODULE_INSTALL_SRC_DIR}/ 
+        DESTINATION ${LOCAL_INSTALL_INC_DIR}
+        COMPONENT Development
+        FILES_MATCHING 
+            PATTERN "*.h"
+            PATTERN "*.hpp"
+            PATTERN "*.hxx"
+    )
+else()
+    if(DEFINED MODULE_SOURCE_C_DIR AND EXISTS "${MODULE_SOURCE_C_DIR}/inc")
+        install(DIRECTORY ${MODULE_SOURCE_C_DIR}/inc/ 
+            DESTINATION ${LOCAL_INSTALL_INC_DIR}
+            COMPONENT Development
+            FILES_MATCHING PATTERN "*.h"
+        )
     endif()
-
-    # c++
-    if ( DEFINED MODULE_SOURCE_CXX_DIR )
-        file ( GLOB_RECURSE LOCAL_LIB_CXX_HEADERS CONFIGURE_DEPENDS ${MODULE_SOURCE_CXX_DIR}/*.h* )
-        file ( GLOB_RECURSE LOCAL_LIB_CXX_SOURCES CONFIGURE_DEPENDS ${MODULE_SOURCE_CXX_DIR}/*.c* )
+    if(DEFINED MODULE_SOURCE_CXX_DIR AND EXISTS "${MODULE_SOURCE_CXX_DIR}/inc")
+        install(DIRECTORY ${MODULE_SOURCE_CXX_DIR}/inc/ 
+            DESTINATION ${LOCAL_INSTALL_INC_DIR}
+            COMPONENT Development
+            FILES_MATCHING 
+                PATTERN "*.h"
+                PATTERN "*.hpp"
+                PATTERN "*.hxx"
+        )
     endif()
-    #message ( WARNING ${LOCAL_LIB_C_HEADERS} ${LOCAL_LIB_C_SOURCES} )
-    #message ( WARNING ${LOCAL_LIB_CXX_HEADERS} ${LOCAL_LIB_CXX_SOURCES} )
+endif()
 
-    set ( LOCAL_LIB_INCLUDE_DIRS "" )
-    foreach ( _headerFile ${LOCAL_LIB_C_HEADERS} )
-        get_filename_component( _dir ${_headerFile} PATH )
-        list ( APPEND LOCAL_LIB_INCLUDE_DIRS ${_dir} )
-    endforeach()
-    foreach ( _headerFile ${LOCAL_LIB_CXX_HEADERS} )
-        get_filename_component( _dir ${_headerFile} PATH )
-        list ( APPEND LOCAL_LIB_INCLUDE_DIRS ${_dir} )
-    endforeach()
-    list ( APPEND LOCAL_LIB_INCLUDE_DIRS ${CMAKE_CURRENT_BINARY_DIR} )
-    list ( APPEND LOCAL_LIB_INCLUDE_DIRS ${MODULE_EXTERNAL_INCLUDE_DIR} )
-    list ( REMOVE_DUPLICATES LOCAL_LIB_INCLUDE_DIRS )
-    #message ( WARNING ${LOCAL_LIB_INCLUDE_DIRS} )
+# Export targets (for find_package support)
+install(EXPORT ${LOCAL_LIB_NAME}Targets
+    FILE ${LOCAL_LIB_NAME}Targets.cmake
+    NAMESPACE ${PLATFORM_SYSTEM_TARGET}::
+    DESTINATION ${LOCAL_INSTALL_LIB_DIR}/cmake/${LOCAL_LIB_NAME}
+    COMPONENT Development
+)
 
-    # build
-    include_directories ( ${SDK_INCLUDE_DIR} ${LOCAL_LIB_INCLUDE_DIRS} ${MODULE_EXTERNAL_INCLUDE_DIR}  )
-    link_directories ( ${SDK_LIB_DIR} ${CMAKE_CURRENT_BINARY_DIR} ${MODULE_EXTERNAL_LIB_DIR} )
-    #message ( WARNING ${LOCAL_LIB_NAME} ${SDK_INCLUDE_DIR} ${SDK_LIB_DIR} ${CMAKE_CURRENT_BINARY_DIR} ${MODULE_EXTERNAL_LIB_DIR} )
-
-    add_library ( ${LOCAL_LIB_NAME} SHARED ${LOCAL_LIB_C_SOURCES} ${LOCAL_LIB_CXX_SOURCES} )
-    target_link_libraries ( ${LOCAL_LIB_NAME} PRIVATE ${MODULE_EXTERNAL_LIB} )
-
-    set_target_properties ( ${LOCAL_LIB_NAME} PROPERTIES VERSION ${LOCAL_LIB_VERNO} SOVERSION ${BUILD_LIB_SOVERNO} )
-    if ( BUILD_WITH_STRIP )
-        set_target_properties ( ${LOCAL_LIB_NAME} PROPERTIES LINK_FLAGS_RELEASE -s )
-    endif ()
-
-    # install
-    set ( LOCAL_INSTALL_INC_DIR ${INSTALL_INC_ROOT_DIR}/${LOWER_MODULE_NAME} )
-    set ( LOCAL_INSTALL_LIB_DIR ${INSTALL_LIB_ROOT_DIR} )
-
-    install ( TARGETS ${LOCAL_LIB_NAME} LIBRARY DESTINATION ${LOCAL_INSTALL_LIB_DIR} )
-
-    if ( DEFINED MODULE_INSTALL_SRC_DIR )
-        install ( DIRECTORY ${MODULE_INSTALL_SRC_DIR} DESTINATION ${LOCAL_INSTALL_INC_DIR} )
-    else ()
-        if ( DEFINED MODULE_SOURCE_C_DIR )
-            install ( DIRECTORY ${MODULE_SOURCE_C_DIR}/inc/ DESTINATION ${LOCAL_INSTALL_INC_DIR} )
-        endif ()
-        if ( DEFINED MODULE_SOURCE_CXX_DIR )
-            install ( DIRECTORY ${MODULE_SOURCE_CXX_DIR}/inc/ DESTINATION ${LOCAL_INSTALL_INC_DIR} )
-        endif ()
-    endif ()
-endif ()
+message(STATUS "[SharedLibrary] Configuration complete for ${LOCAL_LIB_NAME}")

@@ -1,54 +1,468 @@
-set( LOCAL_DAEMON_DIR ${CMAKE_CURRENT_LIST_DIR} )
+#===============================================================================
+# LightAP Daemon Build Template
+# Version: 1.1.0
+#
+# This template handles building daemon executables with optional systemd
+# service integration for LightAP modules.
+#
+# Required Variables:
+#   MODULE_NAME              - Module name (e.g., "Core")
+#   MODULE_DAEMON_DIR        - Daemon source directory
+#   MODULE_EXTERNAL_DAEMON_LIB - Libraries to link against
+#
+# Optional Variables - Basic:
+#   MODULE_DAEMON_TARGET        - Custom daemon target name (default: <module>d)
+#   LOCAL_LIB_INCLUDE_DIRS      - Include dirs from library
+#
+# Optional Variables - Systemd Service:
+#   ENABLE_DAEMON_WITH_SYSTEMD     - Enable systemd service integration
+#   MODULE_DAEMONDESCRIPTION       - Service description (default: "<Module> Daemon Service")
+#   MODULE_DAEMONBEFORE            - Systemd Before= dependencies
+#   MODULE_DAEMONAFTER             - Systemd After= dependencies (default: "network.target")
+#   MODULE_DAEMONREQUIRE           - Systemd Requires= dependencies
+#
+# Optional Variables - Systemd Advanced:
+#   MODULE_DAEMON_SERVICE_TYPE     - Service type (default: "notify")
+#   MODULE_DAEMON_KILL_MODE        - Kill mode (default: "process")
+#   MODULE_DAEMON_RESTART          - Restart policy (default: "on-failure")
+#   MODULE_DAEMON_WATCHDOG_SEC     - Watchdog timeout (default: "10")
+#   MODULE_DAEMON_CORE_DUMP        - Core dump limit (default: "infinity")
+#   MODULE_DAEMON_MAX_FILES        - Max open files (default: "65536")
+#   MODULE_DAEMON_MEMORY_LIMIT     - Memory limit (e.g., "512M")
+#   MODULE_DAEMON_CPU_QUOTA        - CPU quota (e.g., "50%")
+#   MODULE_DAEMON_START_LIMIT_INTERVAL - Start limit interval (default: "1min")
+#   MODULE_DAEMON_START_LIMIT_BURST    - Start limit burst (default: "5")
+#
+# Optional Variables - Systemd Security:
+#   MODULE_DAEMON_ENABLE_SECURITY  - Enable security hardening (PrivateTmp, etc.)
+#   MODULE_DAEMON_WORKING_DIR      - Working directory for daemon
+#   MODULE_DAEMON_USER             - Run as specific user
+#   MODULE_DAEMON_GROUP            - Run as specific group
+#   MODULE_DAEMON_ENVIRONMENT      - Environment variables
+#
+# Optional Variables - Systemd Installation:
+#   MODULE_DAEMON_WANTED_BY        - WantedBy target (default: "multi-user.target")
+#   MODULE_DAEMON_ALIAS            - Service alias name
+#   MODULE_DAEMON_AUTO_REGISTER    - Auto-register with systemd on install
+#   MODULE_DAEMON_AUTO_ENABLE      - Auto-enable service on install
+#   MODULE_DAEMON_AUTO_START       - Auto-start service on install
+#
+# Generated Files (with systemd):
+#   ${daemon}d                     - Daemon executable
+#   ${daemon}d.service             - Systemd service unit
+#   98-${daemon}d.preset           - Systemd preset config
+#   install-${daemon}d.sh          - Service installation script
+#   uninstall-${daemon}d.sh        - Service uninstallation script
+#
+# Example - Basic Daemon:
+#   set(ENABLE_BUILD_DAEMON ON)
+#   set(MODULE_DAEMON_DIR ${CMAKE_CURRENT_SOURCE_DIR}/daemon)
+#   set(MODULE_EXTERNAL_DAEMON_LIB lap_core Threads::Threads)
+#   include(BuildTemplate/Daemon.cmake.in)
+#
+# Example - Daemon with Systemd:
+#   set(ENABLE_BUILD_DAEMON ON)
+#   set(ENABLE_DAEMON_WITH_SYSTEMD ON)
+#   set(MODULE_DAEMON_DIR ${CMAKE_CURRENT_SOURCE_DIR}/daemon)
+#   set(MODULE_EXTERNAL_DAEMON_LIB lap_core lap_log)
+#   set(MODULE_DAEMONDESCRIPTION "Core Module Daemon")
+#   set(MODULE_DAEMONAFTER "network.target postgresql.service")
+#   set(MODULE_DAEMON_AUTO_REGISTER ON)  # Auto-register on install
+#   set(MODULE_DAEMON_AUTO_ENABLE ON)    # Auto-enable service
+#   include(BuildTemplate/Daemon.cmake.in)
+#
+# Example - Production Daemon with Security:
+#   set(ENABLE_BUILD_DAEMON ON)
+#   set(ENABLE_DAEMON_WITH_SYSTEMD ON)
+#   set(MODULE_DAEMON_DIR ${CMAKE_CURRENT_SOURCE_DIR}/daemon)
+#   set(MODULE_EXTERNAL_DAEMON_LIB lap_core)
+#   set(MODULE_DAEMON_USER "daemon")
+#   set(MODULE_DAEMON_GROUP "daemon")
+#   set(MODULE_DAEMON_ENABLE_SECURITY ON)
+#   set(MODULE_DAEMON_MEMORY_LIMIT "512M")
+#   set(MODULE_DAEMON_CPU_QUOTA "50%")
+#   set(MODULE_DAEMON_AUTO_REGISTER ON)
+#   include(BuildTemplate/Daemon.cmake.in)
+#
+# Manual Service Management:
+#   # After installation, if not auto-registered:
+#   sudo /usr/lib/systemd/scripts/install-cored.sh
+#   
+#   # To uninstall:
+#   sudo /usr/lib/systemd/scripts/uninstall-cored.sh
+#
+#===============================================================================
 
-if ( ENABLE_BUILD_DAEMON )
-    # env
-    if ( DEFINED MODULE_DAEMON_TARGET )
-        set ( LOCAL_DAEMON_TARGET ${MODULE_DAEMON_TARGET} )
-    else ()
-        string ( TOLOWER ${MODULE_NAME} LOWER_MODULE_NAME )
-        set ( LOCAL_DAEMON_TARGET ${LOWER_MODULE_NAME}d )
-    endif ()
+if(NOT ENABLE_BUILD_DAEMON)
+    return()
+endif()
 
-    file ( GLOB_RECURSE LOCAL_DAEMON_HEADERS CONFIGURE_DEPENDS ${MODULE_DAEMON_DIR}/*.h* )
-    file ( GLOB_RECURSE LOCAL_DAEMON_SOURCES CONFIGURE_DEPENDS ${MODULE_DAEMON_DIR}/*.c* )
+message(STATUS "[Daemon] Building daemon for ${MODULE_NAME}")
 
-    set ( LOCAL_DAEMON_INCLUDE_DIRS "" )
-    foreach ( _headerFile ${LOCAL_DAEMON_HEADERS} )
-        get_filename_component( _dir ${_headerFile} PATH )
-        list ( APPEND LOCAL_DAEMON_INCLUDE_DIRS ${_dir} )
-    endforeach ()
-    list ( APPEND LOCAL_DAEMON_INCLUDE_DIRS ${CMAKE_CURRENT_BINARY_DIR} )
-    list ( APPEND LOCAL_DAEMON_INCLUDE_DIRS ${LOCAL_LIB_INCLUDE_DIRS} )         # include from library
-    list ( APPEND LOCAL_DAEMON_INCLUDE_DIRS ${SDK_INCLUDE_DIR} )
-    list ( REMOVE_DUPLICATES LOCAL_DAEMON_INCLUDE_DIRS )
+#===============================================================================
+# Validate Required Variables
+#===============================================================================
 
-    add_executable ( ${LOCAL_DAEMON_TARGET} ${LOCAL_DAEMON_SOURCES} )
+lap_require_variable(MODULE_NAME 
+    "[Daemon] MODULE_NAME is required but not defined")
+lap_require_variable(MODULE_DAEMON_DIR 
+    "[Daemon] MODULE_DAEMON_DIR is required but not defined")
+lap_require_variable(MODULE_EXTERNAL_DAEMON_LIB 
+    "[Daemon] MODULE_EXTERNAL_DAEMON_LIB is required but not defined")
 
-    if ( BUILD_WITH_STRIP )
-        set_target_properties ( ${LOCAL_DAEMON_TARGET} PROPERTIES LINK_FLAGS_RELEASE -s )
-    endif ()
+lap_validate_directory("${MODULE_DAEMON_DIR}" "MODULE_DAEMON_DIR")
 
-    target_include_directories ( ${LOCAL_DAEMON_TARGET} PRIVATE ${LOCAL_DAEMON_INCLUDE_DIRS} )
-    target_link_libraries ( ${LOCAL_DAEMON_TARGET} ${MODULE_EXTERNAL_DAEMON_LIB} )
-    #message ( WARNING ${MODULE_EXTERNAL_DAEMON_LIB} )
+#===============================================================================
+# Daemon Target Configuration
+#===============================================================================
 
-    set ( LOCAL_INSTALL_BIN_DIR ${INSTALL_BIN_ROOT_DIR} )
-    install ( TARGETS ${LOCAL_DAEMON_TARGET} RUNTIME DESTINATION ${LOCAL_INSTALL_BIN_DIR} )
+# Determine daemon target name
+if(DEFINED MODULE_DAEMON_TARGET)
+    set(LOCAL_DAEMON_TARGET ${MODULE_DAEMON_TARGET})
+else()
+    string(TOLOWER ${MODULE_NAME} LOWER_MODULE_NAME)
+    set(LOCAL_DAEMON_TARGET ${LOWER_MODULE_NAME}d)
+endif()
 
-    if ( ENABLE_DAEMON_WITH_SYSTEMD )
-        set ( BUILD_SYSTEMD_CMAKE_DIR ${LOCAL_DAEMON_DIR}/systemd )
-        set ( DaemonService         ${LOCAL_DAEMON_TARGET} )
-        set ( DaemonDestination     ${LOCAL_INSTALL_BIN_DIR} )
-        set ( DaemonDescription     ${MODULE_DAEMONDESCRIPTION} )
-        set ( DaemonBefore          ${MODULE_DAEMONBEFORE} )
-        set ( DaemonAfter           ${MODULE_DAEMONAFTER} )
-        set ( DaemonRequire         ${MODULE_DAEMONREQUIRE} )
+message(STATUS "[Daemon] Daemon target: ${LOCAL_DAEMON_TARGET}")
 
-        configure_file ( ${BUILD_SYSTEMD_CMAKE_DIR}/service.cmake ${CMAKE_BINARY_DIR}/systemd/${DaemonService}.service @ONLY )
-        configure_file ( ${BUILD_SYSTEMD_CMAKE_DIR}/preset.cmake ${CMAKE_BINARY_DIR}/systemd/98-${DaemonService}.preset @ONLY )
-        configure_file ( ${BUILD_SYSTEMD_CMAKE_DIR}/mklink.sh.cmake ${CMAKE_BINARY_DIR}/mklink.sh @ONLY )
+# Collect daemon sources
+file(GLOB_RECURSE LOCAL_DAEMON_HEADERS CONFIGURE_DEPENDS 
+    "${MODULE_DAEMON_DIR}/*.h"
+    "${MODULE_DAEMON_DIR}/*.hpp"
+    "${MODULE_DAEMON_DIR}/*.hxx"
+)
 
-        install ( FILES ${CMAKE_BINARY_DIR}/systemd/${DaemonService}.service DESTINATION ${SDK_ROOT_DIR}/lib/systemd/system )
-        install ( FILES ${CMAKE_BINARY_DIR}/systemd/98-${DaemonService}.preset DESTINATION ${SDK_ROOT_DIR}/lib/systemd/system-preset )
+file(GLOB_RECURSE LOCAL_DAEMON_SOURCES CONFIGURE_DEPENDS 
+    "${MODULE_DAEMON_DIR}/*.cpp"
+    "${MODULE_DAEMON_DIR}/*.cxx"
+    "${MODULE_DAEMON_DIR}/*.cc"
+    "${MODULE_DAEMON_DIR}/*.c"
+)
+
+if(NOT LOCAL_DAEMON_SOURCES)
+    message(FATAL_ERROR "[Daemon] No daemon sources found in ${MODULE_DAEMON_DIR}")
+endif()
+
+list(LENGTH LOCAL_DAEMON_SOURCES DAEMON_SOURCE_COUNT)
+message(STATUS "[Daemon] Found ${DAEMON_SOURCE_COUNT} daemon source files")
+
+# Configure include directories
+set(LOCAL_DAEMON_INCLUDE_DIRS "")
+
+foreach(_headerFile ${LOCAL_DAEMON_HEADERS})
+    get_filename_component(_dir ${_headerFile} DIRECTORY)
+    list(APPEND LOCAL_DAEMON_INCLUDE_DIRS ${_dir})
+endforeach()
+
+list(APPEND LOCAL_DAEMON_INCLUDE_DIRS 
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${LOCAL_LIB_INCLUDE_DIRS}  # Include from library
+    ${SDK_INCLUDE_DIR}
+    ${MODULE_EXTERNAL_INCLUDE_DIR}
+)
+
+list(REMOVE_DUPLICATES LOCAL_DAEMON_INCLUDE_DIRS)
+
+#===============================================================================
+# Build Configuration
+#===============================================================================
+
+# Create daemon executable
+add_executable(${LOCAL_DAEMON_TARGET} ${LOCAL_DAEMON_SOURCES})
+
+# Apply LightAP standard C++ configuration
+if(COMMAND lap_configure_cxx_target)
+    lap_configure_cxx_target(TARGET ${LOCAL_DAEMON_TARGET})
+else()
+    message(WARNING "[Daemon] lap_configure_cxx_target not available, using fallback")
+    set_target_properties(${LOCAL_DAEMON_TARGET} PROPERTIES
+        CXX_STANDARD ${CMAKE_CXX_STANDARD}
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+    )
+endif()
+
+# Strip symbols in release builds
+if(BUILD_WITH_STRIP)
+    set_target_properties(${LOCAL_DAEMON_TARGET} PROPERTIES 
+        LINK_FLAGS_RELEASE -s
+    )
+endif()
+
+# Modern CMake: Use target_* commands
+target_include_directories(${LOCAL_DAEMON_TARGET} 
+    PRIVATE ${LOCAL_DAEMON_INCLUDE_DIRS}
+)
+
+target_link_directories(${LOCAL_DAEMON_TARGET}
+    PRIVATE 
+        ${SDK_LIB_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}
+        ${MODULE_EXTERNAL_LIB_DIR}
+)
+
+target_link_libraries(${LOCAL_DAEMON_TARGET} PRIVATE ${MODULE_EXTERNAL_DAEMON_LIB})
+
+#===============================================================================
+# Installation Rules
+#===============================================================================
+
+set(LOCAL_INSTALL_BIN_DIR ${INSTALL_BIN_ROOT_DIR})
+
+install(TARGETS ${LOCAL_DAEMON_TARGET}
+    RUNTIME DESTINATION ${LOCAL_INSTALL_BIN_DIR}
+        COMPONENT Runtime
+)
+
+#===============================================================================
+# Systemd Integration (Optional)
+#===============================================================================
+
+if(ENABLE_DAEMON_WITH_SYSTEMD)
+    message(STATUS "[Daemon] Configuring systemd service for ${LOCAL_DAEMON_TARGET}")
+    
+    # Validate systemd template directory
+    set(BUILD_SYSTEMD_CMAKE_DIR ${CMAKE_CURRENT_LIST_DIR}/systemd)
+    
+    if(NOT EXISTS "${BUILD_SYSTEMD_CMAKE_DIR}/service.cmake.in")
+        message(WARNING "[Daemon] Systemd template not found at ${BUILD_SYSTEMD_CMAKE_DIR}/service.cmake.in")
+    else()
+        # Set systemd service parameters
+        set(DaemonService ${LOCAL_DAEMON_TARGET})
+        set(DaemonDestination ${LOCAL_INSTALL_BIN_DIR})
+        
+        # Set defaults for optional parameters
+        if(NOT DEFINED MODULE_DAEMONDESCRIPTION)
+            set(MODULE_DAEMONDESCRIPTION "${MODULE_NAME} Daemon Service")
+        endif()
+        
+        # Service configuration with defaults
+        set(DaemonDescription ${MODULE_DAEMONDESCRIPTION})
+        
+        # Dependencies configuration
+        if(DEFINED MODULE_DAEMONBEFORE AND NOT "${MODULE_DAEMONBEFORE}" STREQUAL "")
+            set(DaemonBefore "Before=${MODULE_DAEMONBEFORE}")
+        else()
+            set(DaemonBefore "")
+        endif()
+        
+        if(DEFINED MODULE_DAEMONAFTER AND NOT "${MODULE_DAEMONAFTER}" STREQUAL "")
+            set(DaemonAfter "After=${MODULE_DAEMONAFTER}")
+        else()
+            set(DaemonAfter "After=network.target")
+        endif()
+        
+        if(DEFINED MODULE_DAEMONREQUIRE AND NOT "${MODULE_DAEMONREQUIRE}" STREQUAL "")
+            set(DaemonRequire "Requires=${MODULE_DAEMONREQUIRE}")
+        else()
+            set(DaemonRequire "")
+        endif()
+        
+        # Service type and behavior
+        if(NOT DEFINED MODULE_DAEMON_SERVICE_TYPE)
+            set(MODULE_DAEMON_SERVICE_TYPE "notify")
+        endif()
+        set(DaemonServiceType ${MODULE_DAEMON_SERVICE_TYPE})
+        
+        if(NOT DEFINED MODULE_DAEMON_KILL_MODE)
+            set(MODULE_DAEMON_KILL_MODE "process")
+        endif()
+        set(DaemonKillMode ${MODULE_DAEMON_KILL_MODE})
+        
+        if(NOT DEFINED MODULE_DAEMON_RESTART)
+            set(MODULE_DAEMON_RESTART "on-failure")
+        endif()
+        set(DaemonRestart ${MODULE_DAEMON_RESTART})
+        
+        if(NOT DEFINED MODULE_DAEMON_WATCHDOG_SEC)
+            set(MODULE_DAEMON_WATCHDOG_SEC "10")
+        endif()
+        set(DaemonWatchdogSec ${MODULE_DAEMON_WATCHDOG_SEC})
+        
+        # Resource limits
+        if(NOT DEFINED MODULE_DAEMON_CORE_DUMP)
+            set(MODULE_DAEMON_CORE_DUMP "infinity")
+        endif()
+        set(DaemonCoreDump ${MODULE_DAEMON_CORE_DUMP})
+        
+        if(NOT DEFINED MODULE_DAEMON_MAX_FILES)
+            set(MODULE_DAEMON_MAX_FILES "65536")
+        endif()
+        set(DaemonMaxFiles ${MODULE_DAEMON_MAX_FILES})
+        
+        # Optional memory and CPU limits
+        if(DEFINED MODULE_DAEMON_MEMORY_LIMIT)
+            set(DaemonMemoryLimit "MemoryLimit=${MODULE_DAEMON_MEMORY_LIMIT}")
+        else()
+            set(DaemonMemoryLimit "")
+        endif()
+        
+        if(DEFINED MODULE_DAEMON_CPU_QUOTA)
+            set(DaemonCPUQuota "CPUQuota=${MODULE_DAEMON_CPU_QUOTA}")
+        else()
+            set(DaemonCPUQuota "")
+        endif()
+        
+        # Start limit configuration
+        if(NOT DEFINED MODULE_DAEMON_START_LIMIT_INTERVAL)
+            set(MODULE_DAEMON_START_LIMIT_INTERVAL "1min")
+        endif()
+        set(DaemonStartLimitInterval ${MODULE_DAEMON_START_LIMIT_INTERVAL})
+        
+        if(NOT DEFINED MODULE_DAEMON_START_LIMIT_BURST)
+            set(MODULE_DAEMON_START_LIMIT_BURST "5")
+        endif()
+        set(DaemonStartLimitBurst ${MODULE_DAEMON_START_LIMIT_BURST})
+        
+        # Security options
+        if(MODULE_DAEMON_ENABLE_SECURITY)
+            set(DaemonSecurityOptions "PrivateTmp=yes\nNoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes")
+        else()
+            set(DaemonSecurityOptions "")
+        endif()
+        
+        # Working directory
+        if(DEFINED MODULE_DAEMON_WORKING_DIR)
+            set(DaemonWorkingDirectory "WorkingDirectory=${MODULE_DAEMON_WORKING_DIR}")
+        else()
+            set(DaemonWorkingDirectory "")
+        endif()
+        
+        # User and Group
+        if(DEFINED MODULE_DAEMON_USER)
+            set(DaemonUser "User=${MODULE_DAEMON_USER}")
+        else()
+            set(DaemonUser "")
+        endif()
+        
+        if(DEFINED MODULE_DAEMON_GROUP)
+            set(DaemonGroup "Group=${MODULE_DAEMON_GROUP}")
+        else()
+            set(DaemonGroup "")
+        endif()
+        
+        # Environment variables
+        if(DEFINED MODULE_DAEMON_ENVIRONMENT)
+            set(DaemonEnvironment "Environment=${MODULE_DAEMON_ENVIRONMENT}")
+        else()
+            set(DaemonEnvironment "")
+        endif()
+        
+        # Install target
+        if(NOT DEFINED MODULE_DAEMON_WANTED_BY)
+            set(MODULE_DAEMON_WANTED_BY "multi-user.target")
+        endif()
+        set(DaemonWantedBy ${MODULE_DAEMON_WANTED_BY})
+        
+        if(DEFINED MODULE_DAEMON_ALIAS)
+            set(DaemonAlias "${MODULE_DAEMON_ALIAS}")
+        else()
+            set(DaemonAlias "")
+        endif()
+        
+        # Auto-enable and auto-start options
+        if(NOT DEFINED MODULE_DAEMON_AUTO_ENABLE)
+            set(MODULE_DAEMON_AUTO_ENABLE OFF)
+        endif()
+        set(DaemonAutoEnable ${MODULE_DAEMON_AUTO_ENABLE})
+        
+        if(NOT DEFINED MODULE_DAEMON_AUTO_START)
+            set(MODULE_DAEMON_AUTO_START OFF)
+        endif()
+        set(DaemonAutoStart ${MODULE_DAEMON_AUTO_START})
+        
+        # Configure systemd files
+        configure_file(
+            "${BUILD_SYSTEMD_CMAKE_DIR}/service.cmake.in" 
+            "${CMAKE_BINARY_DIR}/systemd/${DaemonService}.service" 
+            @ONLY
+        )
+        
+        configure_file(
+            "${BUILD_SYSTEMD_CMAKE_DIR}/preset.cmake.in" 
+            "${CMAKE_BINARY_DIR}/systemd/98-${DaemonService}.preset" 
+            @ONLY
+        )
+        
+        # Configure installation and uninstallation scripts
+        configure_file(
+            "${BUILD_SYSTEMD_CMAKE_DIR}/install-service.sh.in"
+            "${CMAKE_BINARY_DIR}/systemd/install-${DaemonService}.sh"
+            @ONLY
+        )
+        
+        configure_file(
+            "${BUILD_SYSTEMD_CMAKE_DIR}/uninstall-service.sh.in"
+            "${CMAKE_BINARY_DIR}/systemd/uninstall-${DaemonService}.sh"
+            @ONLY
+        )
+        
+        # Make scripts executable
+        file(CHMOD "${CMAKE_BINARY_DIR}/systemd/install-${DaemonService}.sh"
+            PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                        GROUP_READ GROUP_EXECUTE
+                        WORLD_READ WORLD_EXECUTE
+        )
+        
+        file(CHMOD "${CMAKE_BINARY_DIR}/systemd/uninstall-${DaemonService}.sh"
+            PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                        GROUP_READ GROUP_EXECUTE
+                        WORLD_READ WORLD_EXECUTE
+        )
+        
+        # Determine installation prefix
+        if(NOT DEFINED CMAKE_INSTALL_PREFIX OR CMAKE_INSTALL_PREFIX STREQUAL "")
+            set(SYSTEMD_INSTALL_PREFIX ${SDK_ROOT_DIR})
+        else()
+            set(SYSTEMD_INSTALL_PREFIX ${CMAKE_INSTALL_PREFIX})
+        endif()
+        
+        # Install systemd service files
+        install(FILES "${CMAKE_BINARY_DIR}/systemd/${DaemonService}.service"
+            DESTINATION ${SYSTEMD_INSTALL_PREFIX}/lib/systemd/system
+            COMPONENT Runtime
+        )
+        
+        install(FILES "${CMAKE_BINARY_DIR}/systemd/98-${DaemonService}.preset"
+            DESTINATION ${SYSTEMD_INSTALL_PREFIX}/lib/systemd/system-preset
+            COMPONENT Runtime
+        )
+        
+        # Install management scripts
+        install(PROGRAMS 
+            "${CMAKE_BINARY_DIR}/systemd/install-${DaemonService}.sh"
+            "${CMAKE_BINARY_DIR}/systemd/uninstall-${DaemonService}.sh"
+            DESTINATION ${SYSTEMD_INSTALL_PREFIX}/lib/systemd/scripts
+            COMPONENT Runtime
+        )
+        
+        # Add post-install script to automatically register service
+        if(MODULE_DAEMON_AUTO_REGISTER)
+            install(CODE "
+                message(STATUS \"Registering ${DaemonService} with systemd...\")
+                execute_process(
+                    COMMAND ${CMAKE_BINARY_DIR}/systemd/install-${DaemonService}.sh
+                    RESULT_VARIABLE INSTALL_RESULT
+                    OUTPUT_VARIABLE INSTALL_OUTPUT
+                    ERROR_VARIABLE INSTALL_ERROR
+                )
+                if(NOT INSTALL_RESULT EQUAL 0)
+                    message(WARNING \"Failed to register service: \${INSTALL_ERROR}\")
+                else()
+                    message(STATUS \"\${INSTALL_OUTPUT}\")
+                endif()
+            " COMPONENT Runtime)
+        endif()
+        
+        message(STATUS "[Daemon] Systemd service files configured:")
+        message(STATUS "[Daemon]   Service: ${CMAKE_BINARY_DIR}/systemd/${DaemonService}.service")
+        message(STATUS "[Daemon]   Preset:  ${CMAKE_BINARY_DIR}/systemd/98-${DaemonService}.preset")
+        message(STATUS "[Daemon]   Install script: ${CMAKE_BINARY_DIR}/systemd/install-${DaemonService}.sh")
+        message(STATUS "[Daemon]   Auto-register: ${MODULE_DAEMON_AUTO_REGISTER}")
+        message(STATUS "[Daemon]   Auto-enable: ${MODULE_DAEMON_AUTO_ENABLE}")
+        message(STATUS "[Daemon]   Auto-start: ${MODULE_DAEMON_AUTO_START}")
     endif()
 endif()
+
+message(STATUS "[Daemon] Configuration complete for ${LOCAL_DAEMON_TARGET}")

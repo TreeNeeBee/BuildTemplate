@@ -1,26 +1,191 @@
-set ( LOCAL_PROTOBUF_DIR ${CMAKE_CURRENT_LIST_DIR} )
+#===============================================================================
+# LightAP Protobuf Build Template
+# Version: 1.1.0
+#
+# This template handles Protocol Buffer code generation and library building
+# for LightAP modules. It automatically generates C++ code from .proto files
+# and builds them into a static library.
+#
+# Required Variables:
+#   MODULE_NAME      - Module name (e.g., "Core")
+#   MODULE_PROTO_DIR - Directory containing .proto files
+#   MODULE_VERSION   - Module version for library naming
+#
+# Optional Variables:
+#   MODULE_PROTOBUF_TARGET - Custom protobuf library target name
+#   ENABLE_BUILD_WITH_PLATFORM_PREX - Enable platform-specific naming
+#   PLATFORM_SYSTEM_TARGET - Platform prefix for library name
+#   PROTOBUF_IMPORT_DIRS - Additional proto import directories
+#
+# Generated Outputs:
+#   - ${LOCAL_PROTO_NAME} static library
+#   - Generated .pb.h and .pb.cc files in ${CMAKE_CURRENT_BINARY_DIR}
+#   - Export targets for find_package support
+#
+# Example:
+#   set(ENABLE_BUILD_PROTOBUF ON)
+#   set(MODULE_PROTO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/proto)
+#   set(MODULE_VERSION "1.0.0")
+#   include(BuildTemplate/Protobuf.cmake.in)
+#===============================================================================
 
-if ( ENABLE_BUILD_PROTOBUF )
-    if ( DEFINED MODULE_PROTO_DIR )
-        string ( TOLOWER ${MODULE_NAME} LOWER_MODULE_NAME )
-        if ( ENABLE_BUILD_WITH_PLATFORM_PREX )
-            set ( LOCAL_PROTO_NAME ${PLATFORM_SYSTEM_TARGET}_${LOWER_MODULE_NAME}_proto )
-        else ()
-            set ( LOCAL_PROTO_NAME ${LOWER_MODULE_NAME}_proto )
-        endif ()
-
-        find_package(Protobuf REQUIRED)
-        FILE ( GLOB LOCAL_PROTO_FILELIST ${MODULE_PROTO_DIR}/*proto )
-        #message( WARNING ${LOCAL_PROTO_FILELIST} )
-
-        #build proto library
-        PROTOBUF_GENERATE_CPP( LOCAL_PROTO_SRC LOCAL_PROTO_HEADER ${LOCAL_PROTO_FILELIST} )
-
-        add_compile_options ( -fPIC )
-
-        add_library ( ${LOCAL_PROTO_NAME} STATIC ${LOCAL_PROTO_HEADER} ${LOCAL_PROTO_SRC} )
-        target_link_libraries ( ${LOCAL_PROTO_NAME} ${PROTOBUF_LIBRARIES} )
-    else()
-        message ( WARNING "Pls set MODULE_PROTO_DIR first!!!" )
-    endif()
+if(NOT ENABLE_BUILD_PROTOBUF)
+    return()
 endif()
+
+message(STATUS "[Protobuf] Building protobuf library for ${MODULE_NAME}")
+
+#===============================================================================
+# Validate Required Variables
+#===============================================================================
+
+lap_require_variable(MODULE_NAME 
+    "[Protobuf] MODULE_NAME is required but not defined")
+
+if(NOT DEFINED MODULE_PROTO_DIR)
+    message(FATAL_ERROR "[Protobuf] MODULE_PROTO_DIR is required but not defined. Please set MODULE_PROTO_DIR first!")
+endif()
+
+lap_validate_directory("${MODULE_PROTO_DIR}" "MODULE_PROTO_DIR")
+
+#===============================================================================
+# Find Protobuf Package
+#===============================================================================
+
+find_package(Protobuf REQUIRED)
+
+if(NOT Protobuf_FOUND)
+    message(FATAL_ERROR "[Protobuf] Protobuf package not found. Please install protobuf development libraries.")
+endif()
+
+message(STATUS "[Protobuf] Found Protobuf ${Protobuf_VERSION}")
+message(STATUS "[Protobuf] Protobuf compiler: ${PROTOBUF_PROTOC_EXECUTABLE}")
+
+#===============================================================================
+# Determine Library Target Name
+#===============================================================================
+
+string(TOLOWER ${MODULE_NAME} LOWER_MODULE_NAME)
+
+if(DEFINED MODULE_PROTOBUF_TARGET)
+    set(LOCAL_PROTO_NAME ${MODULE_PROTOBUF_TARGET})
+elseif(ENABLE_BUILD_WITH_PLATFORM_PREX AND DEFINED PLATFORM_SYSTEM_TARGET)
+    set(LOCAL_PROTO_NAME ${PLATFORM_SYSTEM_TARGET}_${LOWER_MODULE_NAME}_proto)
+else()
+    set(LOCAL_PROTO_NAME ${LOWER_MODULE_NAME}_proto)
+endif()
+
+message(STATUS "[Protobuf] Library target: ${LOCAL_PROTO_NAME}")
+
+#===============================================================================
+# Collect .proto Files and Generate C++ Code
+#===============================================================================
+
+file(GLOB LOCAL_PROTO_FILELIST CONFIGURE_DEPENDS 
+    "${MODULE_PROTO_DIR}/*.proto"
+)
+
+if(NOT LOCAL_PROTO_FILELIST)
+    message(FATAL_ERROR "[Protobuf] No .proto files found in ${MODULE_PROTO_DIR}")
+endif()
+
+list(LENGTH LOCAL_PROTO_FILELIST PROTO_FILE_COUNT)
+message(STATUS "[Protobuf] Found ${PROTO_FILE_COUNT} .proto files")
+
+# Generate C++ code from .proto files
+# PROTOBUF_GENERATE_CPP creates .pb.cc and .pb.h files
+protobuf_generate_cpp(LOCAL_PROTO_SRC LOCAL_PROTO_HEADER ${LOCAL_PROTO_FILELIST})
+
+if(NOT LOCAL_PROTO_SRC)
+    message(FATAL_ERROR "[Protobuf] Failed to generate C++ code from .proto files")
+endif()
+
+list(LENGTH LOCAL_PROTO_SRC GENERATED_SOURCE_COUNT)
+message(STATUS "[Protobuf] Generated ${GENERATED_SOURCE_COUNT} C++ source files")
+
+#===============================================================================
+# Create Protobuf Library Target
+#===============================================================================
+
+# Create static library from generated sources
+add_library(${LOCAL_PROTO_NAME} STATIC ${LOCAL_PROTO_HEADER} ${LOCAL_PROTO_SRC})
+
+# Apply LightAP standard C++ configuration
+if(COMMAND lap_configure_cxx_library)
+    lap_configure_cxx_library(TARGET ${LOCAL_PROTO_NAME})
+else()
+    message(WARNING "[Protobuf] lap_configure_cxx_library not available, using fallback")
+    set_target_properties(${LOCAL_PROTO_NAME} PROPERTIES
+        CXX_STANDARD ${CMAKE_CXX_STANDARD}
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+        POSITION_INDEPENDENT_CODE ON
+    )
+endif()
+
+# Ensure -fPIC for static library
+set_target_properties(${LOCAL_PROTO_NAME} PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+)
+
+# Set version if available
+if(DEFINED MODULE_VERSION)
+    set_target_properties(${LOCAL_PROTO_NAME} PROPERTIES
+        VERSION ${MODULE_VERSION}
+    )
+endif()
+
+# Modern CMake: Use target_* commands
+target_include_directories(${LOCAL_PROTO_NAME}
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
+        $<INSTALL_INTERFACE:${INSTALL_INCLUDE_ROOT_DIR}>
+        ${PROTOBUF_INCLUDE_DIRS}
+)
+
+# Handle additional import directories if specified
+if(DEFINED PROTOBUF_IMPORT_DIRS)
+    target_include_directories(${LOCAL_PROTO_NAME}
+        PUBLIC ${PROTOBUF_IMPORT_DIRS}
+    )
+endif()
+
+target_link_libraries(${LOCAL_PROTO_NAME}
+    PUBLIC ${PROTOBUF_LIBRARIES}
+)
+
+#===============================================================================
+# Installation Rules
+#===============================================================================
+
+if(DEFINED INSTALL_INCLUDE_ROOT_DIR AND DEFINED INSTALL_LIB_ROOT_DIR)
+    set(LOCAL_INSTALL_INCLUDE_DIR ${INSTALL_INCLUDE_ROOT_DIR}/${MODULE_NAME}/protobuf)
+    set(LOCAL_INSTALL_LIB_DIR ${INSTALL_LIB_ROOT_DIR})
+
+    # Install generated headers
+    install(FILES ${LOCAL_PROTO_HEADER}
+        DESTINATION ${LOCAL_INSTALL_INCLUDE_DIR}
+        COMPONENT Development
+    )
+
+    # Install library
+    install(TARGETS ${LOCAL_PROTO_NAME}
+        EXPORT ${MODULE_NAME}ProtobufTargets
+        ARCHIVE DESTINATION ${LOCAL_INSTALL_LIB_DIR}
+            COMPONENT Development
+    )
+
+    # Install export targets for find_package support
+    install(EXPORT ${MODULE_NAME}ProtobufTargets
+        FILE ${MODULE_NAME}ProtobufTargets.cmake
+        NAMESPACE ${MODULE_NAME}::
+        DESTINATION ${INSTALL_LIB_ROOT_DIR}/cmake/${MODULE_NAME}
+        COMPONENT Development
+    )
+    
+    message(STATUS "[Protobuf] Will install to: ${LOCAL_INSTALL_LIB_DIR}")
+else()
+    message(WARNING "[Protobuf] Installation directories not defined, skipping install rules")
+endif()
+
+message(STATUS "[Protobuf] Configuration complete for ${LOCAL_PROTO_NAME}")

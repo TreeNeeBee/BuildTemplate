@@ -1,0 +1,52 @@
+# LightAP Systemd Service Template
+# This file is configured by CMake during build time
+# Generated from BuildTemplate/systemd/service.cmake
+
+[Unit]
+Description=@DaemonDescription@
+Documentation=man:@DaemonService@(8)
+@DaemonBefore@
+@DaemonAfter@
+@DaemonRequire@
+
+[Service]
+Type=@DaemonServiceType@
+ExecStart=@DaemonDestination@/@DaemonService@
+ExecReload=/bin/kill -HUP $MAINPID
+ExecStop=/bin/kill -TERM $MAINPID
+KillMode=@DaemonKillMode@
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=@DaemonRestart@
+RestartSec=5s
+
+# Watchdog configuration
+WatchdogSec=@DaemonWatchdogSec@
+NotifyAccess=main
+
+# Resource limits
+LimitCORE=@DaemonCoreDump@
+LimitNOFILE=@DaemonMaxFiles@
+@DaemonMemoryLimit@
+@DaemonCPUQuota@
+
+# Rate limiting for restart
+StartLimitInterval=@DaemonStartLimitInterval@
+StartLimitBurst=@DaemonStartLimitBurst@
+
+# Security hardening (optional)
+@DaemonSecurityOptions@
+
+# Working directory
+@DaemonWorkingDirectory@
+
+# User and Group
+@DaemonUser@
+@DaemonGroup@
+
+# Environment
+@DaemonEnvironment@
+
+[Install]
+WantedBy=@DaemonWantedBy@
+Alias=@DaemonAlias@

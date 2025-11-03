@@ -1,0 +1,6 @@
+# LightAP Systemd Preset Template
+# This file controls whether the service is enabled by default
+# Generated from BuildTemplate/systemd/preset.cmake
+
+# Enable the service by default
+enable @DaemonService@.service

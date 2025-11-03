@@ -1,46 +1,296 @@
-#include(${PROJECT_ROOT}/build/build_cfg.cmake)
+#===============================================================================
+# LightAP Module Configuration Template
+# Version: 1.1.0
+# 
+# This file provides common build settings, options, and helper functions
+# for LightAP modules. It supports both standalone and integrated builds.
+#
+# Usage: 
+#   include(BuildTemplate/Config.cmake.in)  # Standalone mode
+#   include(../../BuildTemplate/Config.cmake.in)  # Integrated mode
+#
+# Required Variables (set by including CMakeLists.txt):
+#   MODULE_NAME         - Module name (e.g., "Core")
+#   MODULE_VERNO        - Module version (e.g., "1.0.0")
+#   MODULE_SOURCE_*_DIR - Source directories
+#
+# Optional Variables:
+#   PLATFORM_SYSTEM_TARGET      - Platform prefix (default: "lap")
+#   SDK_ROOT_DIR                - SDK installation root (default: /usr/local)
+#   MODULE_EXTRA_COMPILE_*_OPTIONS - Additional compiler flags
+#===============================================================================
 
-if( NOT DEFINED PLATFORM_SYSTEM_TARGET )
-    set ( PLATFORM_SYSTEM_TARGET "ara" )
+cmake_minimum_required(VERSION 3.10.2 FATAL_ERROR)
+
+# Prevent multiple inclusion
+if(LAP_BUILD_TEMPLATE_INCLUDED)
+    return()
+endif()
+set(LAP_BUILD_TEMPLATE_INCLUDED TRUE)
+
+message(STATUS "[BuildTemplate] Version 1.1.0")
+
+#===============================================================================
+# CMake Version and Feature Checks
+#===============================================================================
+
+# Check CMake version
+if(CMAKE_VERSION VERSION_LESS "3.10.2")
+    message(FATAL_ERROR "CMake 3.10.2 or higher is required. You are running version ${CMAKE_VERSION}")
 endif()
 
-option ( ENABLE_BUILD_SHARED_LIBRARY "Enable build shared library" OFF )
-option ( ENABLE_BUILD_STATIC_LIBRARY "Enable build static library" OFF )
-option ( ENABLE_BUILD_EXECUTABLE "Enable build executable" OFF )
-option ( ENABLE_BUILD_DAEMON "Enable daemon" OFF )
-option ( ENABLE_BUILD_UNITTEST "Enable module unit test" OFF )
-option ( ENABLE_BUILD_BENCHMARK "Enable benchmark" OFF )
-option ( ENABLE_BUILD_PROTOBUF "Enable protobuf" OFF )
-option ( ENABLE_DAEMON_WITH_SYSTEMD "Has daemon control by systemd" OFF )
-option ( BUILD_WITH_OS_MAC "build in macos" OFF )
-option ( BUILD_WITH_STRIP "build with strip" ON )
-
-add_definitions ( "-DLIB_VERNO=\"${LIB_VERNO}\"" )
-
-set ( CMAKE_C_FLAGS "-Wall -Werror -Wextra -Wl,-rpath,. ${MODULE_EXTRA_COMPILE_C_OPTIONS} " )
-set ( CMAKE_C_FLAGS_DEBUG "-g3 -Og -DARA_DEBUG" CACHE STRING "Debug" FORCE )
-set ( CMAKE_C_FLAGS_RELEASE "-Os" CACHE STRING "Release" FORCE )
-
-set ( CMAKE_CXX_FLAGS "-std=c++14 -Wall -Werror -Wextra -Wl,-rpath,. ${MODULE_EXTRA_COMPILE_CXX_OPTIONS} " )
-set ( CMAKE_CXX_FLAGS_DEBUG "-g3 -Og -DARA_DEBUG" CACHE STRING "Debug" FORCE )
-set ( CMAKE_CXX_FLAGS_RELEASE "-Os" CACHE STRING "Release" FORCE )
-
-set ( CMAKE_BUILD_RPATH "." )
-
-set ( LOCAL_CONFIG_DIR ${CMAKE_CURRENT_LIST_DIR} )
-
-if( NOT DEFINED SDK_ROOT_DIR )
-    set ( SDK_ROOT_DIR /usr/local )
-endif ( )
-
-set ( SDK_INCLUDE_DIR ${SDK_ROOT_DIR}/include/${PLATFORM_SYSTEM_TARGET} )
-set ( SDK_LIB_DIR ${SDK_ROOT_DIR}/lib )
-
-set ( INSTALL_INC_ROOT_DIR ${SDK_ROOT_DIR}/include/${PLATFORM_SYSTEM_TARGET} )
-set ( INSTALL_LIB_ROOT_DIR ${SDK_ROOT_DIR}/lib )
-set ( INSTALL_BIN_ROOT_DIR ${SDK_ROOT_DIR}/bin )
-
-if ( BUILD_WITH_OS_MAC )
-    include_directories ( /opt/homebrew/include )
-    link_directories ( /opt/homebrew/lib )
+# Check C++ standard is set
+if(NOT DEFINED CMAKE_CXX_STANDARD)
+    message(WARNING "[BuildTemplate] CMAKE_CXX_STANDARD not set. Defaulting to C++17")
+    set(CMAKE_CXX_STANDARD 17)
 endif()
+
+# Validate C++ standard value
+if(NOT CMAKE_CXX_STANDARD MATCHES "^(14|17|20|23)$")
+    message(WARNING "[BuildTemplate] Invalid CMAKE_CXX_STANDARD: ${CMAKE_CXX_STANDARD}. Defaulting to 17")
+    set(CMAKE_CXX_STANDARD 17)
+endif()
+
+#===============================================================================
+# Helper Functions for Validation
+#===============================================================================
+
+# Function: lap_require_variable
+# Ensures a required variable is defined
+function(lap_require_variable VAR_NAME ERROR_MSG)
+    if(NOT DEFINED ${VAR_NAME})
+        message(FATAL_ERROR "${ERROR_MSG}")
+    endif()
+endfunction()
+
+# Function: lap_validate_directory
+# Validates that a directory exists
+function(lap_validate_directory DIR_PATH VAR_NAME)
+    if(NOT EXISTS "${DIR_PATH}")
+        message(WARNING "[BuildTemplate] Directory ${VAR_NAME}='${DIR_PATH}' does not exist")
+    endif()
+endfunction()
+
+# Function: lap_print_config
+# Prints configuration summary
+function(lap_print_config)
+    message(STATUS "==============================================================================")
+    message(STATUS "LightAP BuildTemplate Configuration")
+    message(STATUS "==============================================================================")
+    message(STATUS "  Platform Target:    ${PLATFORM_SYSTEM_TARGET}")
+    message(STATUS "  SDK Root:           ${SDK_ROOT_DIR}")
+    message(STATUS "  C++ Standard:       C++${CMAKE_CXX_STANDARD}")
+    message(STATUS "  Build Type:         ${CMAKE_BUILD_TYPE}")
+    message(STATUS "  Install Prefix:     ${CMAKE_INSTALL_PREFIX}")
+    message(STATUS "==============================================================================")
+endfunction()
+
+#===============================================================================
+# Helper Functions for Target Configuration
+#===============================================================================
+
+# Function: lap_configure_cxx_target
+# Configures a C++ target with LightAP's standard settings
+# Usage: lap_configure_cxx_target(TARGET target_name)
+function(lap_configure_cxx_target)
+    cmake_parse_arguments(ARG "" "TARGET" "" ${ARGN})
+    
+    if(NOT ARG_TARGET)
+        message(FATAL_ERROR "lap_configure_cxx_target: TARGET argument required")
+    endif()
+    
+    if(NOT TARGET ${ARG_TARGET})
+        message(FATAL_ERROR "lap_configure_cxx_target: Target '${ARG_TARGET}' does not exist")
+    endif()
+    
+    # Set C++ standard based on root configuration
+    set_target_properties(${ARG_TARGET} PROPERTIES
+        CXX_STANDARD ${CMAKE_CXX_STANDARD}
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+    )
+    
+    # Add compiler-specific warnings
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(${ARG_TARGET} PRIVATE
+            -Wall -Wextra -Wpedantic
+            $<$<CONFIG:Debug>:-g3 -Og>
+            $<$<CONFIG:Release>:-O3>
+        )
+    elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+        target_compile_options(${ARG_TARGET} PRIVATE
+            /W4
+            $<$<CONFIG:Debug>:/Od>
+            $<$<CONFIG:Release>:/O2>
+        )
+    endif()
+    
+    message(STATUS "[BuildTemplate] Configured target '${ARG_TARGET}' with C++${CMAKE_CXX_STANDARD}")
+endfunction()
+
+# Function: lap_configure_cxx_library
+# Configures a library target with additional settings
+# Usage: lap_configure_cxx_library(TARGET target_name)
+function(lap_configure_cxx_library)
+    cmake_parse_arguments(ARG "" "TARGET" "" ${ARGN})
+    
+    if(NOT ARG_TARGET)
+        message(FATAL_ERROR "lap_configure_cxx_library: TARGET argument required")
+    endif()
+    
+    if(NOT TARGET ${ARG_TARGET})
+        message(FATAL_ERROR "lap_configure_cxx_library: Target '${ARG_TARGET}' does not exist")
+    endif()
+    
+    # Apply base configuration
+    lap_configure_cxx_target(TARGET ${ARG_TARGET})
+    
+    # Additional library-specific settings
+    set_target_properties(${ARG_TARGET} PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+    )
+    
+    message(STATUS "[BuildTemplate] Configured library target '${ARG_TARGET}'")
+endfunction()
+
+# Function: lap_collect_sources
+# Collects source files from a directory
+# Usage: lap_collect_sources(OUTPUT_VAR DIRECTORY pattern)
+function(lap_collect_sources)
+    cmake_parse_arguments(ARG "" "OUTPUT_VAR;DIRECTORY" "PATTERNS" ${ARGN})
+    
+    if(NOT ARG_OUTPUT_VAR OR NOT ARG_DIRECTORY)
+        message(FATAL_ERROR "lap_collect_sources: OUTPUT_VAR and DIRECTORY required")
+    endif()
+    
+    if(NOT ARG_PATTERNS)
+        set(ARG_PATTERNS "*.cpp" "*.c" "*.cc" "*.cxx")
+    endif()
+    
+    set(COLLECTED_FILES "")
+    foreach(PATTERN ${ARG_PATTERNS})
+        file(GLOB_RECURSE PATTERN_FILES CONFIGURE_DEPENDS "${ARG_DIRECTORY}/${PATTERN}")
+        list(APPEND COLLECTED_FILES ${PATTERN_FILES})
+    endforeach()
+    
+    set(${ARG_OUTPUT_VAR} ${COLLECTED_FILES} PARENT_SCOPE)
+endfunction()
+
+#===============================================================================
+# Platform Configuration
+#===============================================================================
+
+# Platform target prefix
+if(NOT DEFINED PLATFORM_SYSTEM_TARGET)
+    set(PLATFORM_SYSTEM_TARGET "lap")
+endif()
+
+# Build options
+option(ENABLE_BUILD_SHARED_LIBRARY "Enable build shared library" OFF)
+option(ENABLE_BUILD_STATIC_LIBRARY "Enable build static library" OFF)
+option(ENABLE_BUILD_EXECUTABLE "Enable build executable" OFF)
+option(ENABLE_BUILD_DAEMON "Enable daemon" OFF)
+option(ENABLE_BUILD_UNITTEST "Enable module unit test" OFF)
+option(ENABLE_BUILD_BENCHMARK "Enable benchmark" OFF)
+option(ENABLE_BUILD_PROTOBUF "Enable protobuf" OFF)
+option(ENABLE_DAEMON_WITH_SYSTEMD "Has daemon control by systemd" OFF)
+option(BUILD_WITH_OS_MAC "Build in macOS" OFF)
+option(BUILD_WITH_STRIP "Build with strip" ON)
+option(ENABLE_BUILD_WITH_PLATFORM_PREX "Use platform prefix in target names" ON)
+
+#===============================================================================
+# Compiler Flags Configuration
+#===============================================================================
+
+# Library version definition
+if(DEFINED LIB_VERNO)
+    add_definitions("-DLIB_VERNO=\"${LIB_VERNO}\"")
+endif()
+
+# C Compiler flags
+set(CMAKE_C_FLAGS "-Wall -Werror -Wextra -Wl,-rpath,. ${MODULE_EXTRA_COMPILE_C_OPTIONS}" CACHE STRING "C flags" FORCE)
+set(CMAKE_C_FLAGS_DEBUG "-g3 -Og -DNIO_DEBUG" CACHE STRING "C Debug flags" FORCE)
+set(CMAKE_C_FLAGS_RELEASE "-Os -DNDEBUG" CACHE STRING "C Release flags" FORCE)
+
+# C++ Compiler flags
+# Note: C++ standard is set by root CMakeLists.txt (C++17 with C++14 fallback)
+set(CMAKE_CXX_FLAGS "-Wall -Werror -Wextra -Wl,-rpath,. ${MODULE_EXTRA_COMPILE_CXX_OPTIONS}" CACHE STRING "CXX flags" FORCE)
+set(CMAKE_CXX_FLAGS_DEBUG "-g3 -Og -DNIO_DEBUG" CACHE STRING "CXX Debug flags" FORCE)
+set(CMAKE_CXX_FLAGS_RELEASE "-Os -DNDEBUG" CACHE STRING "CXX Release flags" FORCE)
+
+# Build RPATH configuration
+set(CMAKE_BUILD_RPATH ".")
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+
+# Local configuration directory
+set(LOCAL_CONFIG_DIR ${CMAKE_CURRENT_LIST_DIR})
+
+#===============================================================================
+# SDK and Installation Paths
+#===============================================================================
+
+# SDK root directory
+if(NOT DEFINED SDK_ROOT_DIR)
+    set(SDK_ROOT_DIR /usr/local)
+endif()
+
+# SDK directories
+set(SDK_INCLUDE_DIR ${SDK_ROOT_DIR}/include/${PLATFORM_SYSTEM_TARGET})
+set(SDK_LIB_DIR ${SDK_ROOT_DIR}/lib)
+
+# Installation directories
+if(NOT DEFINED CMAKE_INSTALL_PREFIX OR CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+    set(CMAKE_INSTALL_PREFIX ${SDK_ROOT_DIR} CACHE PATH "Installation prefix" FORCE)
+endif()
+
+set(INSTALL_INC_ROOT_DIR ${CMAKE_INSTALL_PREFIX}/include/${PLATFORM_SYSTEM_TARGET})
+set(INSTALL_LIB_ROOT_DIR ${CMAKE_INSTALL_PREFIX}/lib)
+set(INSTALL_BIN_ROOT_DIR ${CMAKE_INSTALL_PREFIX}/bin)
+set(INSTALL_EXECUTE_ROOT_DIR ${CMAKE_INSTALL_PREFIX}/bin)
+
+#===============================================================================
+# Platform-Specific Configuration
+#===============================================================================
+
+if(BUILD_WITH_OS_MAC OR APPLE)
+    # macOS specific configuration
+    if(EXISTS "/opt/homebrew/include")
+        include_directories(/opt/homebrew/include)
+        link_directories(/opt/homebrew/lib)
+        message(STATUS "[BuildTemplate] macOS Homebrew paths configured")
+    endif()
+    
+    # macOS rpath configuration
+    set(CMAKE_MACOSX_RPATH ON)
+    set(CMAKE_INSTALL_NAME_DIR "@rpath")
+endif()
+
+#===============================================================================
+# Compiler Detection and Configuration
+#===============================================================================
+
+# Detect compiler
+message(STATUS "[BuildTemplate] Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
+message(STATUS "[BuildTemplate] Build Type: ${CMAKE_BUILD_TYPE}")
+
+# Compiler-specific warnings
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+    # GCC-specific flags
+    add_compile_options(-fdiagnostics-color=always)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    # Clang-specific flags
+    add_compile_options(-fcolor-diagnostics)
+endif()
+
+#===============================================================================
+# Finalization
+#===============================================================================
+
+# Print configuration (can be disabled by setting LAP_QUIET_CONFIG)
+if(NOT LAP_QUIET_CONFIG)
+    lap_print_config()
+endif()
+
+message(STATUS "[BuildTemplate] Configuration complete")
