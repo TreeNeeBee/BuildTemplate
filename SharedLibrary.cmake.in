@@ -112,8 +112,9 @@ endif()
 #===============================================================================
 
 set(LOCAL_LIB_INCLUDE_DIRS "")
+set(LOCAL_LIB_PUBLIC_INCLUDE_DIRS "")
 
-# Extract include directories from headers
+# Extract include directories from headers (for PRIVATE use)
 foreach(_headerFile ${LOCAL_LIB_C_HEADERS} ${LOCAL_LIB_CXX_HEADERS})
     get_filename_component(_dir ${_headerFile} DIRECTORY)
     list(APPEND LOCAL_LIB_INCLUDE_DIRS ${_dir})
@@ -125,8 +126,19 @@ list(APPEND LOCAL_LIB_INCLUDE_DIRS
     ${MODULE_EXTERNAL_INCLUDE_DIR}
 )
 
+# For PUBLIC/INTERFACE, only use inc directories (not source paths)
+if(DEFINED MODULE_SOURCE_C_DIR AND EXISTS "${MODULE_SOURCE_C_DIR}/inc")
+    list(APPEND LOCAL_LIB_PUBLIC_INCLUDE_DIRS "${MODULE_SOURCE_C_DIR}/inc")
+endif()
+if(DEFINED MODULE_SOURCE_CXX_DIR AND EXISTS "${MODULE_SOURCE_CXX_DIR}/inc")
+    list(APPEND LOCAL_LIB_PUBLIC_INCLUDE_DIRS "${MODULE_SOURCE_CXX_DIR}/inc")
+endif()
+
 # Remove duplicates
 list(REMOVE_DUPLICATES LOCAL_LIB_INCLUDE_DIRS)
+if(LOCAL_LIB_PUBLIC_INCLUDE_DIRS)
+    list(REMOVE_DUPLICATES LOCAL_LIB_PUBLIC_INCLUDE_DIRS)
+endif()
 
 #===============================================================================
 # Build Configuration
@@ -173,9 +185,10 @@ endif()
 # Modern CMake: Use target_* commands
 target_include_directories(${LOCAL_LIB_NAME} 
     PUBLIC
-        $<BUILD_INTERFACE:${LOCAL_LIB_INCLUDE_DIRS}>
+        $<BUILD_INTERFACE:${LOCAL_LIB_PUBLIC_INCLUDE_DIRS}>
         $<INSTALL_INTERFACE:include/${PLATFORM_SYSTEM_TARGET}/${LOWER_MODULE_NAME}>
     PRIVATE
+        ${LOCAL_LIB_INCLUDE_DIRS}
         ${CMAKE_CURRENT_BINARY_DIR}
 )
 
