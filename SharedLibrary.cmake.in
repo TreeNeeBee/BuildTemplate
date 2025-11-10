@@ -199,8 +199,29 @@ target_link_directories(${LOCAL_LIB_NAME}
 )
 
 # Link external libraries
+# Use PUBLIC linkage for lap_* modules to properly handle transitive dependencies
 if(DEFINED MODULE_EXTERNAL_LIB)
-    target_link_libraries(${LOCAL_LIB_NAME} PRIVATE ${MODULE_EXTERNAL_LIB})
+    set(_public_libs "")
+    set(_private_libs "")
+    
+    foreach(_lib ${MODULE_EXTERNAL_LIB})
+        # Check if this is a LightAP module (starts with ${PLATFORM_SYSTEM_TARGET}_)
+        string(FIND "${_lib}" "${PLATFORM_SYSTEM_TARGET}_" _is_lap_target)
+        if(_is_lap_target EQUAL 0)
+            list(APPEND _public_libs ${_lib})
+        else()
+            list(APPEND _private_libs ${_lib})
+        endif()
+    endforeach()
+    
+    if(_public_libs)
+        target_link_libraries(${LOCAL_LIB_NAME} PUBLIC ${_public_libs})
+        message(STATUS "[SharedLibrary] Public dependencies: ${_public_libs}")
+    endif()
+    if(_private_libs)
+        target_link_libraries(${LOCAL_LIB_NAME} PRIVATE ${_private_libs})
+        message(STATUS "[SharedLibrary] Private dependencies: ${_private_libs}")
+    endif()
 endif()
 
 #===============================================================================
@@ -259,5 +280,7 @@ install(EXPORT ${LOCAL_LIB_NAME}Targets
     DESTINATION ${LOCAL_INSTALL_LIB_DIR}/cmake/${LOCAL_LIB_NAME}
     COMPONENT Development
 )
+
+message(STATUS "[SharedLibrary] Exported targets: ${LOCAL_LIB_NAME}Targets")
 
 message(STATUS "[SharedLibrary] Configuration complete for ${LOCAL_LIB_NAME}")
